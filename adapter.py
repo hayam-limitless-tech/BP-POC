@@ -64,7 +64,45 @@ def last_user_message(messages: List[ChatMessage]) -> str:
 async def chat_completions(body: ChatCompletionsRequest):
     user_text = last_user_message(body.messages).strip()
     if not user_text:
-        raise HTTPException(status_code=400, detail="No user message found in messages[]")
+        # BP sometimes calls with an empty user turn (preflight / warm-up).
+        # Return a valid empty completion rather than 400.
+        created = int(time.time())
+        stream_id = f"chatcmpl-{uuid.uuid4().hex}"
+
+        if not body.stream:
+            return JSONResponse({
+                "id": stream_id,
+                "object": "chat.completion",
+                "created": created,
+                "model": body.model,
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": ""},
+                    "finish_reason": "stop",
+                }],
+            })
+
+        async def empty_sse():
+            init_event = {
+                "id": stream_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": body.model,
+                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+            }
+            yield f"data: {json.dumps(init_event, ensure_ascii=False)}\n\n"
+            final_event = {
+                "id": stream_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": body.model,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            }
+            yield f"data: {json.dumps(final_event, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(empty_sse(), media_type="text/event-stream")
+
 
     sender_id = (body.user or str(uuid.uuid4())).strip()
 
