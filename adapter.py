@@ -132,7 +132,7 @@ async def chat_completions(body: ChatCompletionsRequest):
 
     user_text = last_user_message(body.messages).strip()
 
-    # BP sometimes sends an empty user turn (preflight/warm-up). Do NOT 400.
+    
     if not user_text:
         if not body.stream:
             return JSONResponse(_empty_chat_completion(body.model))
@@ -177,44 +177,11 @@ async def chat_completions(body: ChatCompletionsRequest):
         "sender_id": sender_id,
         "user_message": user_text,
         # Ask Lili to stream if BP asked us to stream
-        "stream": bool(body.stream),  # rename if your Lili expects "streaming"
+        "stream": bool(body.stream),  
     }
 
     created = int(time.time())
     stream_id = f"chatcmpl-{uuid.uuid4().hex}"
-
-    # -----------------------------
-    # Non-streaming response
-    # -----------------------------
-    if not body.stream:
-        async with httpx.AsyncClient(timeout=LILI_TIMEOUT_SECONDS) as client:
-            resp = await client.post(LILI_ENDPOINT, json=payload)
-
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"Lili error {resp.status_code}: {resp.text}")
-
-        try:
-            data = resp.json()
-        except Exception:
-            raise HTTPException(status_code=502, detail=f"Lili returned non-JSON: {resp.text}")
-
-        assistant_text = (data.get("message") or data.get("error") or "").strip()
-
-        return JSONResponse(
-            {
-                "id": stream_id,
-                "object": "chat.completion",
-                "created": created,
-                "model": body.model,
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {"role": "assistant", "content": assistant_text},
-                        "finish_reason": "stop",
-                    }
-                ],
-            }
-        )
 
     # -----------------------------
     # Streaming response (proxy + fallback)
